@@ -56,6 +56,13 @@ Parameters:
     MinValue: 1
     MaxValue: 30
     Description: A card nobody clicks within this many days is marked expired by the worker.
+  ApproveEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Show "Approve & send as me" on the cards and let the callback send. false hides
+      the button and refuses approve clicks; replies go out via Move to my Gmail Drafts.
   ScheduleEnabled:
     Type: String
     Default: "false"
@@ -153,6 +160,7 @@ Resources:
           CREDIT_CHAT_AUDIENCE: !Ref ChatAudience
           CREDIT_SA_S3_KEY: config/google-service-account.json
           CREDIT_APPROVAL_EXPIRY_DAYS: !Ref ApprovalExpiryDays
+          CREDIT_APPROVE_ENABLED: !Ref ApproveEnabled
 
   # Function URL, AuthType NONE: Google Chat cannot sign SigV4, so the bearer-token
   # verification inside the handler is the perimeter (fail closed without an audience).
@@ -255,6 +263,7 @@ Resources:
           CHAT_ACTION_URL: !GetAtt CallbackUrl.FunctionUrl
           APPROVALS_BUCKET: !Ref StateBucket
           APPROVAL_EXPIRY_DAYS: !Ref ApprovalExpiryDays
+          APPROVE_ENABLED: !Ref ApproveEnabled
 
   WorkerSchedule:
     Type: AWS::Events::Rule

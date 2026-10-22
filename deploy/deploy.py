@@ -52,6 +52,8 @@ def build_package() -> Path:
     print("[2/3] copying credit_bot package and main.py")
     shutil.copytree(ROOT / "credit_bot", build / "credit_bot", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copy(ROOT / "main.py", build / "main.py")
+    if (ROOT / "assets").is_dir():  # reply attachments (PDF directions)
+        shutil.copytree(ROOT / "assets", build / "assets")
     for junk in build.rglob("__pycache__"):
         shutil.rmtree(junk, ignore_errors=True)
     out = DIST / "creditbot-callback.zip"

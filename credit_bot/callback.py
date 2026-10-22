@@ -43,7 +43,10 @@ from credit_bot.approval_cards import (
     ACTION_QUEUE_FILTER,
     ACTION_QUEUE_PAGE,
     ACTION_REJECT,
+    REPLY_ATTACHMENTS,
     PendingEntry,
+    attach_files,
+    attachment_paths,
     build_card,
     queue_cards,
 )
@@ -285,7 +288,16 @@ def build_mime(entry: PendingEntry, from_address: str) -> bytes:
     msg.set_content(entry.body)
     if entry.body_html:
         msg.add_alternative(entry.body_html, subtype="html")
+    paths = attachment_paths(entry.attachments or REPLY_ATTACHMENTS)
+    missing = set(entry.attachments or REPLY_ATTACHMENTS) - {p.name for p in paths}
+    if missing:
+        log.warning("attachments not found in the package, reply goes without them: %s", sorted(missing))
+    attach_files(msg, paths)
     return msg.as_bytes()
+
+
+def _approve_enabled() -> bool:
+    return _env("CREDIT_APPROVE_ENABLED", "false").lower() in ("1", "true", "yes")
 
 
 # ---------------------------------------------------------------- events
@@ -381,6 +393,12 @@ def act(store: Store, entry_id: str, action: str, clicker: str, addons: bool, gm
     entry = store.pending(entry_id)
     if entry is None:
         return _text("This card's entry is gone (expired or never stored). Handle the request from Gmail.", addons)
+
+    if action == ACTION_APPROVE and not _approve_enabled():
+        # Switched off for now: nothing is claimed, the card stays live, and the
+        # reply still goes out via Move to my Gmail Drafts + a manual send.
+        log.info("approve refused (disabled) for %s by %s", entry_id, clicker)
+        return _text("Approve & send is switched off for now — use Move to my Gmail Drafts and send from Gmail.", addons)
 
     now = _now()
     if not store.claim(entry_id, {"by": clicker, "action": action, "at": now}):

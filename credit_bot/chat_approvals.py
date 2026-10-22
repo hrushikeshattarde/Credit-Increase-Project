@@ -21,7 +21,14 @@ import requests
 from google.oauth2 import service_account
 import google.auth.transport.requests as google_requests
 
-from .approval_cards import PendingEntry, build_card, build_notice_card, entry_id_for, queue_cards
+from .approval_cards import (
+    REPLY_ATTACHMENTS,
+    PendingEntry,
+    build_card,
+    build_notice_card,
+    entry_id_for,
+    queue_cards,
+)
 from .gmail_client import RequestEmail, reply_recipients, reply_subject
 from .metrics import CreditMetrics
 from .template import billing_hold_value, missing_ci_value, missing_rc_value, unbilled_value
@@ -50,6 +57,7 @@ def build_entry(
         ["Loads Missing Rate Confirmations", missing_rc_value(metrics)],
         ["Loads Missing Carrier Invoices", missing_ci_value(metrics)],
         ["Loads on Billing Hold", billing_hold_value(metrics)],
+        ["Attachment", ", ".join(REPLY_ATTACHMENTS)],
     ]
     message_id = req.rfc_message_id or req.message_id
     return PendingEntry(
@@ -63,6 +71,7 @@ def build_entry(
         body=text,
         body_html=html,
         facts=facts,
+        attachments=list(REPLY_ATTACHMENTS),
     )
 
 
@@ -226,6 +235,19 @@ def sweep_expired(store: ApprovalStore, poster: ChatPoster, expiry_days: int, no
     return expired
 
 
+def rerender_pending(store: ApprovalStore, poster: ChatPoster, approve_enabled: bool) -> int:
+    """Rewrite every live card with the current button set (used after the Approve
+    switch changes). Returns how many were updated."""
+    done = 0
+    for entry in store.live_entries():
+        if not entry.chat_message:
+            continue
+        card = build_card(entry, poster.action_url, interactive=True, approve_enabled=approve_enabled)
+        if poster.patch_cards(entry.chat_message, [card]) == 200:
+            done += 1
+    return done
+
+
 def refresh_tracker(store: ApprovalStore, poster: ChatPoster, expiry_days: int, now: datetime | None = None) -> str:
     """Rewrite the standing 'Drafts awaiting approval' message in place; post it the
     first time (or again if it was deleted). Returns the message name."""
@@ -269,14 +291,20 @@ def publish_notice(req: RequestEmail, reason: str, poster: ChatPoster) -> str:
     return poster.post_card(card, fallback_text=f"Credit request (manual): {req.subject}", thread_key=f"notice-{entry_id_for(message_id)}")
 
 
-def publish(entry: PendingEntry, store: ApprovalStore, poster: ChatPoster, interactive: bool = True) -> str:
+def publish(
+    entry: PendingEntry,
+    store: ApprovalStore,
+    poster: ChatPoster,
+    interactive: bool = True,
+    approve_enabled: bool = True,
+) -> str:
     """Store the entry, then post its card. Returns the Chat message name.
 
     The entry is written first so a click can never find a card without its entry.
     A failed post leaves a pending entry, which the next run reports as 'pending'
     rather than duplicating; the caller falls back to a Gmail draft."""
     store.put_pending(entry)
-    card = build_card(entry, poster.action_url, interactive=interactive)
+    card = build_card(entry, poster.action_url, interactive=interactive, approve_enabled=approve_enabled)
     customer = entry.facts[0][1] if entry.facts else entry.to
     name = poster.post_card(card, fallback_text=f"Credit limit increase reply for {customer}", thread_key=entry.entry_id)
     if name:

@@ -90,6 +90,16 @@ Everything is the credit bot's own, independent of the payment bot:
 | Gmail delegation | the existing service-account key, uploaded by `deploy.py --sa-key` as a private object `config/google-service-account.json` in the state bucket (readable only by the Lambda role) |
 | Reviewer roster | stack parameter `Reviewers` in `deploy/params.prod.json` |
 
+### Attachment and the Approve switch
+
+Every reply, whether sent from the card, moved to someone's Drafts, or saved as a
+Gmail draft, carries the PDF in `assets/` ("OPERATIONS Delivered Unbilled Loads
+Report Directions.pdf"); the card lists it under Attachment. The stack parameter
+`ApproveEnabled` (and `APPROVE_ENABLED` locally) controls the "Approve & send as
+me" button: with it off (the default) cards offer only Move to my Gmail Drafts and
+Reject, and the callback refuses approve clicks on older cards. After flipping it,
+`python main.py --rerender` rewrites the pending cards with the current buttons.
+
 ### One-time Google Cloud setup (console)
 1. Create a Google Cloud project for the bot (e.g. `credit-increase-bot`) and note its
    project **number**.

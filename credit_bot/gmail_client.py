@@ -18,6 +18,8 @@ from pathlib import Path
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
+from .approval_cards import attach_files, attachment_paths
+
 log = logging.getLogger(__name__)
 
 SCOPES = [
@@ -250,6 +252,7 @@ class GmailClient:
             msg["References"] = req.rfc_message_id
         msg.set_content(text_body)
         msg.add_alternative(html_body, subtype="html")
+        attach_files(msg, attachment_paths())
 
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
         return raw, to, cc

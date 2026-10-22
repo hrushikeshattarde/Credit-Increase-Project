@@ -100,7 +100,7 @@ def publish_to_chat(req: RequestEmail, metrics, html: str, text: str, settings: 
         return entry.chat_message or "(existing)"
     poster = ChatPoster(settings.chat_sa_file, settings.chat_space, settings.chat_action_url)
     try:
-        name = publish(entry, approvals, poster)
+        name = publish(entry, approvals, poster, approve_enabled=settings.approve_enabled)
     except Exception as exc:
         log.warning("Chat card could not be posted for %s (%s); falling back to a Gmail draft", req.message_id, exc)
         return None
@@ -302,15 +302,25 @@ def main() -> int:
         help="list the Google Chat spaces the credit bot's Chat app is a member of (to find CHAT_SPACE)",
     )
     parser.add_argument("--tracker", action="store_true", help="only refresh the pinned 'Drafts awaiting approval' tracker")
+    parser.add_argument("--rerender", action="store_true", help="rewrite every pending card with the current buttons (after changing APPROVE_ENABLED)")
     args = parser.parse_args()
 
     settings = load_settings()
     setup_logging(settings)
 
-    if args.tracker:
+    if args.tracker or args.rerender:
         if not chat_enabled(settings):
             log.error("chat mode is not configured")
             return 1
+        if args.rerender:
+            from credit_bot.chat_approvals import ApprovalStore, ChatPoster, rerender_pending
+
+            n = rerender_pending(
+                ApprovalStore(settings.approvals_bucket),
+                ChatPoster(settings.chat_sa_file, settings.chat_space, settings.chat_action_url),
+                settings.approve_enabled,
+            )
+            log.info("%s pending card(s) re-rendered (approve %s)", n, "on" if settings.approve_enabled else "off")
         refresh_queue(settings)
         return 0
 

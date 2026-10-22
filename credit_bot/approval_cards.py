@@ -22,6 +22,29 @@ ACTION_MOVE = "move_to_drafts"
 ACTION_REJECT = "reject"
 _BODY_LIMIT = 3600
 
+#: Files attached to every reply (Gmail draft, move-to-drafts and send alike).
+#: They live in assets/ beside the package and are shipped in the Lambda zip.
+REPLY_ATTACHMENTS = ("OPERATIONS Delivered Unbilled Loads Report Directions.pdf",)
+
+
+def attachment_paths(names=REPLY_ATTACHMENTS) -> list:
+    """Existing files for the named attachments, looked up in assets/."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "assets"
+    found = [root / name for name in names if (root / name).is_file()]
+    return found
+
+
+def attach_files(message, paths) -> None:
+    """Append the files to an EmailMessage (turns it into multipart/mixed)."""
+    import mimetypes
+
+    for path in paths:
+        ctype, _ = mimetypes.guess_type(str(path))
+        maintype, subtype = (ctype or "application/octet-stream").split("/", 1)
+        message.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
+
 
 def entry_id_for(message_id: str) -> str:
     """Deterministic, key-safe id from the request's RFC Message-ID."""
@@ -54,6 +77,8 @@ class PendingEntry:
     title: str = CARD_TITLE
     chat_message: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    #: File names (in assets/) attached when the reply is sent or drafted.
+    attachments: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)
@@ -75,6 +100,7 @@ class PendingEntry:
             title=str(d.get("title") or CARD_TITLE),
             chat_message=str(d.get("chat_message") or ""),
             created_at=str(d.get("created_at") or datetime.now(timezone.utc).isoformat()),
+            attachments=[str(x) for x in d.get("attachments") or []],
         )
 
 
@@ -274,9 +300,17 @@ def queue_cards(
     return cards
 
 
-def build_card(entry: PendingEntry, action_url: str, interactive: bool = True, status: str = "") -> dict:
+def build_card(
+    entry: PendingEntry,
+    action_url: str,
+    interactive: bool = True,
+    status: str = "",
+    approve_enabled: bool = True,
+) -> dict:
     """The card. ``status`` non-empty renders the terminal form: status line shown,
-    action buttons gone, so the feed doubles as the audit trail."""
+    action buttons gone, so the feed doubles as the audit trail. ``approve_enabled``
+    False leaves out "Approve & send as me" (the reply then goes out from Gmail after
+    "Move to my Gmail Drafts")."""
     widgets = [
         {"decoratedText": {"topLabel": label, "text": _esc(value) or "(none)", "wrapText": True}}
         for label, value in entry.facts
@@ -294,8 +328,9 @@ def build_card(entry: PendingEntry, action_url: str, interactive: bool = True, s
 
     buttons: list[dict] = []
     if interactive and not status:
-        buttons = [
-            _action_button("Approve & send as me", ACTION_APPROVE, entry.entry_id, action_url),
+        if approve_enabled:
+            buttons.append(_action_button("Approve & send as me", ACTION_APPROVE, entry.entry_id, action_url))
+        buttons += [
             _action_button("Move to my Gmail Drafts", ACTION_MOVE, entry.entry_id, action_url),
             _action_button("Reject", ACTION_REJECT, entry.entry_id, action_url),
         ]
@@ -310,10 +345,13 @@ def build_card(entry: PendingEntry, action_url: str, interactive: bool = True, s
         tail.append({"decoratedText": {"topLabel": "Status", "text": "Shadow mode — the draft is also in Gmail Drafts."}})
     tail.append({"buttonList": {"buttons": buttons}})
 
+    title = entry.title
+    if not approve_enabled and title == CARD_TITLE:
+        title = "Credit limit increase reply — move to your Drafts to send"
     return {
         "cardId": f"approval-{entry.entry_id}",
         "card": {
-            "header": {"title": entry.title, "subtitle": f"to {entry.to}"},
+            "header": {"title": title, "subtitle": f"to {entry.to}"},
             "sections": [
                 {"widgets": widgets},
                 {"header": "Draft reply", "widgets": [{"textParagraph": {"text": body}}]},

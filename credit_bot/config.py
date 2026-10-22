@@ -76,6 +76,9 @@ class Settings:
     approvals_bucket: str = ""
     # A card nobody clicks within this many days is marked expired (the tracker says so).
     approval_expiry_days: int = 3
+    # Show "Approve & send as me" on cards. Off: replies go out via Move to my Gmail
+    # Drafts and a manual send (the callback refuses approve clicks on old cards too).
+    approve_enabled: bool = False
 
     # --- Runtime ------------------------------------------------------------
     state_file: Path = PROJECT_ROOT / "state" / "processed.json"
@@ -108,6 +111,7 @@ def load_settings() -> Settings:
         chat_action_url=_env("CHAT_ACTION_URL", "") or "",
         approvals_bucket=_env("APPROVALS_BUCKET", "") or "",
         approval_expiry_days=_env_int("APPROVAL_EXPIRY_DAYS", 3),
+        approve_enabled=(_env("APPROVE_ENABLED", "false") or "false").lower() in ("1", "true", "yes"),
         state_file=Path(_env("STATE_FILE", str(PROJECT_ROOT / "state" / "processed.json"))),
         log_dir=Path(_env("LOG_DIR", str(PROJECT_ROOT / "logs"))),
         poll_seconds=_env_int("POLL_SECONDS", 300),

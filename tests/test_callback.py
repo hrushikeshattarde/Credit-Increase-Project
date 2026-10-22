@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import email
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -84,7 +85,7 @@ def test_entry_roundtrip_and_card():
     assert "Approve & send as me" not in json.dumps(done) and "Sent by x" in json.dumps(done)
 
 
-def test_mime_has_text_and_html_and_threading():
+def test_mime_has_text_html_threading_and_the_pdf():
     raw = callback.build_mime(_entry(), "brandon@circledelivers.com")
     msg = email.message_from_bytes(raw)
     assert msg["From"] == "brandon@circledelivers.com"
@@ -92,7 +93,20 @@ def test_mime_has_text_and_html_and_threading():
     assert msg["Cc"] == "teamcredit@circledelivers.com, james.hacker@circledelivers.com"
     assert msg["Reply-To"] == "teamcredit@circledelivers.com"
     assert msg["In-Reply-To"] == "<autogen-java-1@google.com>"
-    assert {p.get_content_type() for p in msg.walk() if not p.is_multipart()} == {"text/plain", "text/html"}
+    parts = {(p.get_content_type(), p.get_filename()) for p in msg.walk() if not p.is_multipart()}
+    assert ("text/plain", None) in parts and ("text/html", None) in parts
+    assert ("application/pdf", "OPERATIONS Delivered Unbilled Loads Report Directions.pdf") in parts
+
+
+def test_approve_is_refused_without_a_claim_when_switched_off():
+    os.environ["CREDIT_APPROVE_ENABLED"] = "false"
+    store, e = FakeStore(), _entry()
+    store.pendings[e.entry_id] = e
+    resp = callback.act(store, e.entry_id, "approve", "brandon@circledelivers.com", True, gmail_factory=lambda c: FakeGmail(c))
+    assert "switched off" in resp["body"]
+    assert not store.claims and not store.results
+    card = build_card(e, "https://cb/", approve_enabled=False)
+    assert "Approve & send as me" not in json.dumps(card) and "Move to my Gmail Drafts" in json.dumps(card)
 
 
 def test_normalise_both_schemas():
@@ -109,6 +123,7 @@ def test_normalise_both_schemas():
 
 
 def test_approve_sends_as_clicker_and_second_click_loses():
+    os.environ["CREDIT_APPROVE_ENABLED"] = "true"
     store, e = FakeStore(), _entry()
     store.pendings[e.entry_id] = e
     fake = FakeGmail("brandon@circledelivers.com")
@@ -121,6 +136,7 @@ def test_approve_sends_as_clicker_and_second_click_loses():
 
 
 def test_move_reject_and_failed_send_releases_claim():
+    os.environ["CREDIT_APPROVE_ENABLED"] = "true"
     store, e = FakeStore(), _entry()
     store.pendings[e.entry_id] = e
     fake = FakeGmail("h@circledelivers.com")
