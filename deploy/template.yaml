@@ -50,6 +50,12 @@ Parameters:
   EmailLookbackDays:
     Type: Number
     Default: 14
+  ApprovalExpiryDays:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 30
+    Description: A card nobody clicks within this many days is marked expired by the worker.
   ScheduleEnabled:
     Type: String
     Default: "false"
@@ -146,6 +152,7 @@ Resources:
           CREDIT_REVIEWERS: !Ref Reviewers
           CREDIT_CHAT_AUDIENCE: !Ref ChatAudience
           CREDIT_SA_S3_KEY: config/google-service-account.json
+          CREDIT_APPROVAL_EXPIRY_DAYS: !Ref ApprovalExpiryDays
 
   # Function URL, AuthType NONE: Google Chat cannot sign SigV4, so the bearer-token
   # verification inside the handler is the perimeter (fail closed without an audience).
@@ -247,6 +254,7 @@ Resources:
           CHAT_SPACE: !Ref ChatSpace
           CHAT_ACTION_URL: !GetAtt CallbackUrl.FunctionUrl
           APPROVALS_BUCKET: !Ref StateBucket
+          APPROVAL_EXPIRY_DAYS: !Ref ApprovalExpiryDays
 
   WorkerSchedule:
     Type: AWS::Events::Rule

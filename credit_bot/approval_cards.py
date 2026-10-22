@@ -121,6 +121,159 @@ def build_notice_card(
     }
 
 
+# ----------------------------------------------------------------------------
+# The standing tracker: one message, rewritten each run, pinned once by a human.
+# ----------------------------------------------------------------------------
+ACTION_QUEUE_FILTER = "queue_filter"
+ACTION_QUEUE_PAGE = "queue_page"
+QUEUE_BUCKETS: tuple[tuple[str, str], ...] = (("all", "All"), ("today", "Today"), ("yesterday", "Yesterday"), ("older", "2 days +"))
+TRACKER_CARD_ID = "approval-queue-tracker"
+_MESSAGE_BUDGET = 14_000  # bytes of cards per message that a click response is known to survive
+_CARD_WIDGETS = 90
+
+
+def chat_message_link(message_name: str) -> str:
+    """spaces/S/messages/T.M -> https://chat.google.com/room/S/T/M?cls=10 ('' if unparseable)."""
+    parts = message_name.strip().strip("/").split("/")
+    if len(parts) != 4 or parts[0] != "spaces" or parts[2] != "messages":
+        return ""
+    space, message = parts[1], parts[3]
+    thread, _, tail = message.partition(".")
+    if not (space and thread and tail):
+        return ""
+    return f"https://chat.google.com/room/{space}/{thread}/{tail}?cls=10"
+
+
+def bucket_of(hours_old: float) -> str:
+    days = int(hours_old // 24)
+    return "today" if days <= 0 else ("yesterday" if days == 1 else "older")
+
+
+def _age(hours: float) -> str:
+    return f"{max(hours, 0):.0f}h old" if hours < 24 else f"{hours / 24:.0f}d old"
+
+
+def _created(entry: PendingEntry, fallback: datetime) -> datetime:
+    try:
+        dt = datetime.fromisoformat(entry.created_at)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return fallback
+
+
+def _chip(key: str, label: str, count: int, selected: bool, action_url: str) -> dict:
+    return {
+        "text": f"{'● ' if selected else ''}{label} ({count})",
+        "disabled": selected,
+        "onClick": {"action": {"function": action_url, "parameters": [
+            {"key": "action", "value": ACTION_QUEUE_FILTER}, {"key": "bucket", "value": key},
+        ]}},
+    }
+
+
+def _page_button(label: str, bucket: str, offset: int, action_url: str) -> dict:
+    return {
+        "text": label,
+        "onClick": {"action": {"function": action_url, "parameters": [
+            {"key": "action", "value": ACTION_QUEUE_PAGE}, {"key": "bucket", "value": bucket},
+            {"key": "offset", "value": str(max(offset, 0))},
+        ]}},
+    }
+
+
+def queue_cards(
+    entries: list[PendingEntry],
+    *,
+    now: datetime,
+    expiry_days: int,
+    refreshed: str = "",
+    bucket: str = "all",
+    offset: int = 0,
+    action_url: str = "",
+) -> list[dict]:
+    """The tracker message's cards: date chips, the headline, and one row per pending
+    card (oldest first, those about to expire at the top), linked to the card and to
+    the email. Split into several cards when the rows would exceed Chat's widget cap."""
+    cutoff_hours = max(expiry_days, 0) * 24
+    aged = sorted(
+        (((now - _created(e, now)).total_seconds() / 3600.0, e) for e in entries),
+        key=lambda pair: pair[0], reverse=True,
+    )
+    counts = {key: 0 for key, _ in QUEUE_BUCKETS}
+    for hours, _ in aged:
+        counts["all"] += 1
+        counts[bucket_of(hours)] += 1
+    selected = bucket if bucket in counts else "all"
+    shown = aged if selected == "all" else [p for p in aged if bucket_of(p[0]) == selected]
+    start = 0 if offset >= len(shown) else max(offset, 0)
+    page = shown[start:]
+    expiring = sum(1 for hours, _ in aged if cutoff_hours and hours >= cutoff_hours - 24)
+
+    widgets: list[dict] = []
+    if action_url:
+        widgets.append({"buttonList": {"buttons": [
+            _chip(key, label, counts[key], key == selected, action_url) for key, label in QUEUE_BUCKETS
+        ]}})
+    total = len(aged)
+    headline = f"<b>{total}</b> drafted repl{'y' if total == 1 else 'ies'}"
+    headline += f" — <b>{expiring}</b> within 24h of expiring" if expiring else " — none near expiry"
+    if selected != "all":
+        headline += f"<br><b>{len(shown)}</b> from {dict(QUEUE_BUCKETS)[selected].lower()}"
+    widgets.append({"decoratedText": {"topLabel": "Waiting on a click", "text": headline, "wrapText": True}})
+    if not aged:
+        widgets.append({"decoratedText": {"topLabel": "Queue", "text": "Empty — every drafted reply has been actioned."}})
+    elif not page:
+        widgets.append({"decoratedText": {"topLabel": "Nothing in this day", "text": "No unanswered drafts from that day. Tap All to see the rest.", "wrapText": True}})
+
+    spent = len(json.dumps(widgets)) + 200
+    listed = 0
+    for hours, entry in page:
+        left = cutoff_hours - hours
+        when = "EXPIRED" if cutoff_hours and left <= 0 else (f"{left:.0f}h left" if cutoff_hours else _age(hours))
+        customer = entry.facts[0][1] if entry.facts else entry.to
+        card_link = chat_message_link(entry.chat_message)
+        primary = f'<a href="{card_link}">{_esc(customer[:60])}</a>' if card_link else _esc(customer[:60])
+        row = {"decoratedText": {
+            "topLabel": f"{_age(hours)} · {when}",
+            "text": f'<font color="#A32D2D"><b>UNANSWERED</b></font> {primary} · <a href="{gmail_link(entry.message_id)}">email</a>'
+                    f"<br>{_esc(entry.subject[:90])}",
+            "wrapText": True,
+        }}
+        cost = len(json.dumps(row))
+        if listed and spent + cost > _MESSAGE_BUDGET:
+            break
+        widgets.append(row)
+        spent += cost
+        listed += 1
+
+    if listed and len(shown) > listed:
+        first, last = start + 1, start + listed
+        widgets.append({"decoratedText": {"topLabel": "This page", "text": f"Showing <b>{first}-{last}</b> of <b>{len(shown)}</b>, oldest first.", "wrapText": True}})
+        if action_url:
+            buttons = []
+            if start > 0:
+                buttons.append(_page_button("◀ Newer", selected, max(start - listed, 0), action_url))
+            if last < len(shown):
+                buttons.append(_page_button("Older ▶", selected, last, action_url))
+            if buttons:
+                widgets.append({"buttonList": {"buttons": buttons}})
+
+    header = {
+        "title": "Drafts awaiting approval",
+        "subtitle": f"expire after {expiry_days} day{'' if expiry_days == 1 else 's'}" + (f" · refreshed {refreshed}" if refreshed else ""),
+    }
+    cards: list[dict] = []
+    current: list[dict] = []
+    for widget in widgets:
+        if current and len(current) >= _CARD_WIDGETS:
+            cards.append({"cardId": f"{TRACKER_CARD_ID}-{len(cards)}", "card": {"sections": [{"widgets": current}]}})
+            current = []
+        current.append(widget)
+    cards.append({"cardId": f"{TRACKER_CARD_ID}-{len(cards)}", "card": {"sections": [{"widgets": current}]}})
+    cards[0]["card"]["header"] = header
+    return cards
+
+
 def build_card(entry: PendingEntry, action_url: str, interactive: bool = True, status: str = "") -> dict:
     """The card. ``status`` non-empty renders the terminal form: status line shown,
     action buttons gone, so the feed doubles as the audit trail."""

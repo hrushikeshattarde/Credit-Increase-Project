@@ -244,7 +244,23 @@ def run_once(
         except Exception:
             log.exception("Failed to process %s (%s)", req.message_id, req.subject)
     log.info("Run complete: %s draft(s)/card(s) created or updated", created)
+    if chat_enabled(settings) and not dry_run:
+        refresh_queue(settings)
     return 0
+
+
+def refresh_queue(settings: Settings) -> None:
+    """Expire stale cards and rewrite the pinned 'Drafts awaiting approval' tracker."""
+    from credit_bot.chat_approvals import ApprovalStore, ChatPoster, refresh_tracker, sweep_expired
+
+    try:
+        store = ApprovalStore(settings.approvals_bucket)
+        poster = ChatPoster(settings.chat_sa_file, settings.chat_space, settings.chat_action_url)
+        expired = sweep_expired(store, poster, settings.approval_expiry_days)
+        name = refresh_tracker(store, poster, settings.approval_expiry_days)
+        log.info("Tracker refreshed (%s); %s card(s) expired", name, expired)
+    except Exception:
+        log.exception("Tracker refresh failed")
 
 
 def show_customer(settings: Settings, customer_id: int) -> int:
@@ -285,10 +301,18 @@ def main() -> int:
         "--spaces", action="store_true",
         help="list the Google Chat spaces the credit bot's Chat app is a member of (to find CHAT_SPACE)",
     )
+    parser.add_argument("--tracker", action="store_true", help="only refresh the pinned 'Drafts awaiting approval' tracker")
     args = parser.parse_args()
 
     settings = load_settings()
     setup_logging(settings)
+
+    if args.tracker:
+        if not chat_enabled(settings):
+            log.error("chat mode is not configured")
+            return 1
+        refresh_queue(settings)
+        return 0
 
     if args.spaces:
         from credit_bot.chat_approvals import ChatPoster

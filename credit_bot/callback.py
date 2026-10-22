@@ -40,9 +40,12 @@ from email.utils import formatdate
 from credit_bot.approval_cards import (
     ACTION_APPROVE,
     ACTION_MOVE,
+    ACTION_QUEUE_FILTER,
+    ACTION_QUEUE_PAGE,
     ACTION_REJECT,
     PendingEntry,
     build_card,
+    queue_cards,
 )
 
 log = logging.getLogger("credit_callback")
@@ -190,6 +193,27 @@ class Store:
         except Exception as exc:
             log.warning("release claim failed for %s: %s", entry_id, exc)
 
+    def _list_ids(self, family: str) -> list[str]:
+        ids: list[str] = []
+        for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=f"{self.PREFIX}/{family}/"):
+            for obj in page.get("Contents", []):
+                name = obj["Key"].rsplit("/", 1)[-1]
+                if name.endswith(".json"):
+                    ids.append(name[:-5])
+        return ids
+
+    def live_entries(self) -> list[PendingEntry]:
+        """Pending entries with no result: what the tracker lists."""
+        results = set(self._list_ids("results"))
+        out: list[PendingEntry] = []
+        for entry_id in self._list_ids("pending"):
+            if entry_id in results:
+                continue
+            raw = self._get(self._key("pending", entry_id))
+            if raw:
+                out.append(PendingEntry.from_json(raw))
+        return out
+
 
 # ------------------------------------------------------- gmail as clicker
 class ClickerGmail:
@@ -307,10 +331,39 @@ def _text(text: str, addons: bool) -> dict:
     return _http(200, {"text": text})
 
 
-def _replace_card(card: dict, addons: bool) -> dict:
+def _replace_cards(cards: list[dict], addons: bool) -> dict:
     if addons:
-        return _http(200, {"hostAppDataAction": {"chatDataAction": {"updateMessageAction": {"message": {"cardsV2": [card]}}}}})
-    return _http(200, {"actionResponse": {"type": "UPDATE_MESSAGE"}, "cardsV2": [card]})
+        return _http(200, {"hostAppDataAction": {"chatDataAction": {"updateMessageAction": {"message": {"cardsV2": cards}}}}})
+    return _http(200, {"actionResponse": {"type": "UPDATE_MESSAGE"}, "cardsV2": cards})
+
+
+def _replace_card(card: dict, addons: bool) -> dict:
+    return _replace_cards([card], addons)
+
+
+def _click_param(event: dict, key: str) -> str:
+    """One click parameter, whether Chat sends parameters as a mapping or a key/value list."""
+    for holder in (event.get("commonEventObject"), event.get("common"), event.get("action")):
+        if not isinstance(holder, dict):
+            continue
+        block = holder.get("parameters")
+        if isinstance(block, dict) and block.get(key) is not None:
+            return str(block[key])
+        if isinstance(block, list):
+            for item in block:
+                if isinstance(item, dict) and str(item.get("key")) == key:
+                    return str(item.get("value") or "")
+    return ""
+
+
+def queue_response(store: Store, bucket: str, offset: int, action_url: str, addons: bool) -> dict:
+    """Redraw the pinned tracker filtered to one day bucket (nothing is claimed or sent)."""
+    now = datetime.now(timezone.utc)
+    cards = queue_cards(
+        store.live_entries(), now=now, expiry_days=int(_env("CREDIT_APPROVAL_EXPIRY_DAYS", "3") or 3),
+        refreshed=now.strftime("%b %d %H:%M UTC"), bucket=bucket or "all", offset=offset, action_url=action_url,
+    )
+    return _replace_cards(cards, addons)
 
 
 def _now() -> str:
@@ -395,8 +448,8 @@ def handler(event: dict | None = None, context=None) -> dict:
 
     if kind != "CARD_CLICKED":
         return _text("Credit Increase bot: approval cards are posted here by the bot; the buttons on each card are the interface.", addons)
-    if not action or not entry_id:
-        return _text("That button carried no action or entry — repost the card.", addons)
+    if not action:
+        return _text("That button carried no action — repost the card.", addons)
     if clicker not in _reviewers():
         log.warning("denied: %s is not on the credit reviewer roster (entry %s)", clicker, entry_id)
         return _text(f"Sorry — {clicker or 'this account'} is not on the credit reviewer roster.", addons)
@@ -404,4 +457,16 @@ def handler(event: dict | None = None, context=None) -> dict:
     bucket = _env("CREDIT_STATE_BUCKET")
     if not bucket:
         return _text("Misconfigured: no state bucket. Nothing was done.", addons)
+
+    if action in (ACTION_QUEUE_FILTER, ACTION_QUEUE_PAGE):
+        # A date chip or page button on the pinned tracker: redraw it, filtered. The
+        # chips must point back at this very URL, derived from the request itself.
+        chosen = _click_param(chat_event, "bucket")
+        page = _click_param(chat_event, "offset")
+        own_url = f"https://{host}/" if host else ""
+        log.info("tracker chip: bucket=%s offset=%s by %s", chosen or "all", page or 0, clicker)
+        return queue_response(Store(bucket), chosen, int(page) if page.isdigit() else 0, own_url, addons)
+
+    if not entry_id:
+        return _text("That button carried no entry — repost the card.", addons)
     return act(Store(bucket), entry_id, action, clicker, addons)
