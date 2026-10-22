@@ -315,6 +315,11 @@ def build_card(
         {"decoratedText": {"topLabel": label, "text": _esc(value) or "(none)", "wrapText": True}}
         for label, value in entry.facts
     ]
+    # The PDF rides on the email, not on the card (Chat cards cannot carry files), so
+    # the card names it, whether or not the stored facts already did.
+    if not any(label.startswith("Attachment") for label, _ in entry.facts):
+        names = ", ".join(entry.attachments or REPLY_ATTACHMENTS)
+        widgets.append({"decoratedText": {"topLabel": "Attachment (sent with the email)", "text": _esc(names), "wrapText": True}})
     widgets.append({"decoratedText": {"topLabel": "To", "text": entry.to or "(unknown)"}})
     if entry.cc:
         widgets.append({"decoratedText": {"topLabel": "Cc", "text": ", ".join(entry.cc), "wrapText": True}})

@@ -57,7 +57,7 @@ def build_entry(
         ["Loads Missing Rate Confirmations", missing_rc_value(metrics)],
         ["Loads Missing Carrier Invoices", missing_ci_value(metrics)],
         ["Loads on Billing Hold", billing_hold_value(metrics)],
-        ["Attachment", ", ".join(REPLY_ATTACHMENTS)],
+        ["Attachment (sent with the email)", ", ".join(REPLY_ATTACHMENTS)],
     ]
     message_id = req.rfc_message_id or req.message_id
     return PendingEntry(
