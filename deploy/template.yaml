@@ -1,0 +1,280 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Credit Increase bot — Google Chat click callback and approval state. Independent of
+  the payment bot: its own Lambda, Function URL, role, state bucket and secret.
+
+Parameters:
+  StackEnv:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+  CodeS3Bucket:
+    Type: String
+    Description: Bucket holding the deployment zip (deploy.py uploads it).
+  CodeS3Key:
+    Type: String
+    Description: Key of the deployment zip in CodeS3Bucket.
+  Reviewers:
+    Type: String
+    Default: "[]"
+    Description: >
+      JSON list of the Workspace addresses allowed to click Approve / Move / Reject on
+      credit cards. Empty means no click can send anything (fail closed).
+  ChatAudience:
+    Type: String
+    Default: ""
+    Description: >
+      Google Cloud project NUMBER of the credit bot's Chat app — the audience the
+      callback verifies Google's bearer token against. Blank rejects every request.
+  Timezone:
+    Type: String
+    Default: America/New_York
+
+  # ---- worker (mailbox poller) ---------------------------------------------
+  TransportProBaseUrl:
+    Type: String
+    Default: https://cli.transportpro.net/publicapi/v1
+  GmailUser:
+    Type: String
+    Description: Mailbox impersonated through domain-wide delegation (receives the teamcredit group mail).
+  TeamcreditAddress:
+    Type: String
+    Default: teamcredit@circledelivers.com
+  FormSender:
+    Type: String
+    Default: formresponse@circledelivers.com
+  ChatSpace:
+    Type: String
+    Default: ""
+    Description: spaces/XXXX of the Credit Increase Draft space. Blank = Gmail drafts instead of cards.
+  EmailLookbackDays:
+    Type: Number
+    Default: 14
+  ScheduleEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Run the worker every 5 minutes. Deploy with false, invoke once by hand, then flip to true.
+
+Conditions:
+  ScheduleOn: !Equals [!Ref ScheduleEnabled, "true"]
+
+Resources:
+  # ---- state: approvals/{pending,claims,results}/<entry>.json --------------
+  StateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "creditbot-state-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-approvals
+            Status: Enabled
+            Prefix: approvals/
+            ExpirationInDays: 90
+
+  # The service-account key (Gmail domain-wide delegation) is NOT a stack resource:
+  # the deploying role cannot create Secrets Manager secrets. It is uploaded by
+  # deploy.py as a private object in StateBucket (config/google-service-account.json),
+  # readable only by CallbackRole below.
+
+  CallbackLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/creditbot-chat-callback-${StackEnv}"
+      RetentionInDays: 90
+
+  CallbackRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: creditbot-chat-callback
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${StateBucket.Arn}/config/google-service-account.json"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub "${StateBucket.Arn}/approvals/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt StateBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: "approvals/*"
+
+  CallbackFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: CallbackLogGroup
+    Properties:
+      FunctionName: !Sub "creditbot-chat-callback-${StackEnv}"
+      Description: >
+        Credit Increase bot: Google Chat button clicks — verify the token, claim the
+        entry, send AS THE CLICKER. The one function in this system that sends email.
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: credit_bot.callback.handler
+      Role: !GetAtt CallbackRole.Arn
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          TZ: !Ref Timezone
+          CREDIT_ENV: !Ref StackEnv
+          CREDIT_STATE_BUCKET: !Ref StateBucket
+          CREDIT_REVIEWERS: !Ref Reviewers
+          CREDIT_CHAT_AUDIENCE: !Ref ChatAudience
+          CREDIT_SA_S3_KEY: config/google-service-account.json
+
+  # Function URL, AuthType NONE: Google Chat cannot sign SigV4, so the bearer-token
+  # verification inside the handler is the perimeter (fail closed without an audience).
+  CallbackUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt CallbackFunction.Arn
+      AuthType: NONE
+
+  CallbackUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CallbackFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  # ---- worker: polls the mailbox, computes the figures, posts the cards -------
+  TransportProSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "creditbot/${StackEnv}/transportpro"
+      Description: 'Transport Pro API credentials as {"username": "...", "password": "..."}'
+      SecretString: '{"username": "PLACEHOLDER", "password": "PLACEHOLDER"}'
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/creditbot-worker-${StackEnv}"
+      RetentionInDays: 90
+
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: creditbot-worker
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref TransportProSecret
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "${StateBucket.Arn}/config/google-service-account.json"
+                  - !Sub "${StateBucket.Arn}/config/chat-service-account.json"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource:
+                  - !Sub "${StateBucket.Arn}/approvals/*"
+                  - !Sub "${StateBucket.Arn}/state/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt StateBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: ["approvals/*", "state/*"]
+
+  WorkerFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: WorkerLogGroup
+    Properties:
+      FunctionName: !Sub "creditbot-worker-${StackEnv}"
+      Description: >
+        Credit Increase bot: reads the credit-limit-increase request emails, pulls the
+        customer's figures from Transport Pro, and posts an approval card (or a Gmail draft).
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: credit_bot.lambda_worker.handler
+      Role: !GetAtt WorkerRole.Arn
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+      Timeout: 600
+      MemorySize: 1024
+      Environment:
+        Variables:
+          TZ: !Ref Timezone
+          CREDIT_ENV: !Ref StackEnv
+          CREDIT_STATE_BUCKET: !Ref StateBucket
+          CREDIT_SECRET_TRANSPORTPRO: !Ref TransportProSecret
+          CREDIT_SA_S3_KEY: config/google-service-account.json
+          CREDIT_CHAT_SA_S3_KEY: config/chat-service-account.json
+          TPRO_BASE_URL: !Ref TransportProBaseUrl
+          GMAIL_USER: !Ref GmailUser
+          TEAMCREDIT_ADDRESS: !Ref TeamcreditAddress
+          FORM_SENDER: !Ref FormSender
+          EMAIL_LOOKBACK_DAYS: !Ref EmailLookbackDays
+          APPROVAL_MODE: chat
+          CHAT_SPACE: !Ref ChatSpace
+          CHAT_ACTION_URL: !GetAtt CallbackUrl.FunctionUrl
+          APPROVALS_BUCKET: !Ref StateBucket
+
+  WorkerSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "creditbot-worker-${StackEnv}-every-5-minutes"
+      ScheduleExpression: rate(5 minutes)
+      State: !If [ScheduleOn, ENABLED, DISABLED]
+      Targets:
+        - Id: worker
+          Arn: !GetAtt WorkerFunction.Arn
+
+  WorkerSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WorkerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WorkerSchedule.Arn
+
+Outputs:
+  CallbackUrl:
+    Description: Paste this as the HTTP endpoint of the Chat app in the Google Cloud console.
+    Value: !GetAtt CallbackUrl.FunctionUrl
+  StateBucket:
+    Description: APPROVALS_BUCKET for the worker's .env; also holds config/google-service-account.json
+    Value: !Ref StateBucket
+  TransportProSecretArn:
+    Description: "Holds the Transport Pro username and password as JSON (deploy.py --tpro-secret fills it from .env)"
+    Value: !Ref TransportProSecret
+  WorkerFunction:
+    Value: !Ref WorkerFunction

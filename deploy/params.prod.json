@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "Credit Increase bot stack parameters (non-secret).",
+    "Secrets: the Transport Pro credentials go into the stack's secret (deploy.py --tpro-secret),",
+    "the two Google keys into the state bucket (deploy.py --sa-key / --chat-key).",
+    "ChatAudience = the Google Cloud project NUMBER of the credit bot's Chat app;",
+    "blank makes the callback reject every click (fail closed).",
+    "Reviewers = JSON list of addresses allowed to click Approve / Move / Reject.",
+    "ScheduleEnabled = false deploys the worker without the 5-minute trigger; invoke once by hand, then set true."
+  ],
+  "Reviewers": "[\"hrushikesh.attarde@circledelivers.com\", \"jay.price@circledelivers.com\", \"toddj@circledelivers.com\"]",
+  "ChatAudience": "980891554925",
+  "Timezone": "America/New_York",
+  "TransportProBaseUrl": "https://cli.transportpro.net/publicapi/v1",
+  "GmailUser": "hrushikesh.attarde@circledelivers.com",
+  "TeamcreditAddress": "teamcredit@circledelivers.com",
+  "FormSender": "formresponse@circledelivers.com",
+  "ChatSpace": "spaces/AAQALodz658",
+  "EmailLookbackDays": 14,
+  "ScheduleEnabled": "true"
+}

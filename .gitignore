@@ -1,0 +1,8 @@
+.env
+*.json
+!deploy/params.*.json
+state/
+logs/
+out/
+dist/
+__pycache__/
