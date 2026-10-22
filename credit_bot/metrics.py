@@ -83,6 +83,12 @@ class CreditMetrics:
     def missing_carrier_invoice_count(self) -> int:
         return len(self.missing_carrier_invoice)
 
+    def pickup_range(self, load_ids: list[int]) -> tuple[date | None, date | None]:
+        """(oldest, latest) pickup date among the given loads, from the open-load set."""
+        by_id = {l.load_id: l.pickup_date for l in self.open_loads}
+        dates = [by_id[i] for i in load_ids if by_id.get(i)]
+        return (min(dates), max(dates)) if dates else (None, None)
+
     def summary(self) -> str:
         hold = self.billing_hold_count if self.billing_hold_count is not None else "n/a"
         return (

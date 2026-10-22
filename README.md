@@ -42,9 +42,9 @@ logged as unrecognised and skipped.
 | Template line | Transport Pro search |
 |---|---|
 | Unbilled Load Balance | customer id + Dispatch status *Delivered* + Billing status *Billing Open*: load count, sum of freight + fuel + accessorial charges, oldest and latest pickup date |
-| Loads Missing Rate Confirmations | same loads, Missing Image *Rate Confirmation* |
-| Loads Missing Carrier Invoices | same loads, Missing Image *Carrier Invoice* |
-| Loads on Billing Hold | same loads, Billing Hold *Enabled* |
+| Loads Missing Rate Confirmations | same loads, Missing Image *Rate Confirmation*: count, oldest and latest pickup date |
+| Loads Missing Carrier Invoices | same loads, Missing Image *Carrier Invoice*: count, oldest and latest pickup date |
+| Loads on Billing Hold | same loads, Billing Hold *Enabled*: count, oldest and latest pickup date |
 
 The public API caps each load search at a 60-day date window, so the lookback
 (`LOOKBACK_DAYS`) is walked in 60-day pickup-date windows.

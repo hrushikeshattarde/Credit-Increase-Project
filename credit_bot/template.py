@@ -79,8 +79,30 @@ def unbilled_value(m: CreditMetrics) -> str:
     )
 
 
+def count_with_dates(m: CreditMetrics, load_ids: list[int]) -> str:
+    """'2 (2 loads, oldest 10/10/2026, latest 10/12/2026)', or just '0'."""
+    count = len(load_ids)
+    if count == 0:
+        return "0"
+    oldest, latest = m.pickup_range(load_ids)
+    loads = "1 load" if count == 1 else f"{count} loads"
+    if not oldest:
+        return f"{count} ({loads})"
+    return f"{count} ({loads}, oldest {fmt_date(oldest)}, latest {fmt_date(latest)})"
+
+
+def missing_rc_value(m: CreditMetrics) -> str:
+    return count_with_dates(m, m.missing_rate_confirmation)
+
+
+def missing_ci_value(m: CreditMetrics) -> str:
+    return count_with_dates(m, m.missing_carrier_invoice)
+
+
 def billing_hold_value(m: CreditMetrics) -> str:
-    return str(m.billing_hold_count) if m.billing_hold_count is not None else HOLD_PLACEHOLDER
+    if m.billing_hold_count is None:
+        return HOLD_PLACEHOLDER
+    return count_with_dates(m, m.billing_hold_loads)
 
 
 def render_html(m: CreditMetrics, unanswered_ops_requests: int | str = 0) -> str:
@@ -103,13 +125,13 @@ def render_html(m: CreditMetrics, unanswered_ops_requests: int | str = 0) -> str
         _note("Please review and take action on all pending requests in the Operations Request Sheet."),
         _item("Unbilled Load Balance:", unbilled_value(m)),
         _note("This balance directly impacts your available customer credit limit."),
-        _item("Loads Missing Rate Confirmations:", str(m.missing_rate_confirmation_count)),
+        _item("Loads Missing Rate Confirmations:", missing_rc_value(m)),
         _note("Review and upload missing rate confirmations as soon as possible."),
         _note(
             "If any rate confirmations are being held for fuel updates or accessorial approvals, "
             "please include that note in your response."
         ),
-        _item("Loads Missing Carrier Invoices:", str(m.missing_carrier_invoice_count), bold_value=True),
+        _item("Loads Missing Carrier Invoices:", missing_ci_value(m), bold_value=True),
         _note("Review and upload missing carrier invoices to ensure timely billing and payment processing."),
         _item("Loads on Billing Hold:", billing_hold_value(m), bold_value=True),
         _note("Review and resolve these holds."),
@@ -137,11 +159,11 @@ def render_text(m: CreditMetrics, unanswered_ops_requests: int | str = 0) -> str
         f"    {ARROW} Please review and take action on all pending requests in the Operations Request Sheet.",
         f"- Unbilled Load Balance: {unbilled_value(m)}",
         f"    {ARROW} This balance directly impacts your available customer credit limit.",
-        f"- Loads Missing Rate Confirmations: {m.missing_rate_confirmation_count}",
+        f"- Loads Missing Rate Confirmations: {missing_rc_value(m)}",
         f"    {ARROW} Review and upload missing rate confirmations as soon as possible.",
         f"    {ARROW} If any rate confirmations are being held for fuel updates or accessorial approvals, "
         "please include that note in your response.",
-        f"- Loads Missing Carrier Invoices: {m.missing_carrier_invoice_count}",
+        f"- Loads Missing Carrier Invoices: {missing_ci_value(m)}",
         f"    {ARROW} Review and upload missing carrier invoices to ensure timely billing and payment processing.",
         f"- Loads on Billing Hold: {billing_hold_value(m)}",
         f"    {ARROW} Review and resolve these holds.",

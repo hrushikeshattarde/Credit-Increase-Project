@@ -23,7 +23,7 @@ import google.auth.transport.requests as google_requests
 from .approval_cards import PendingEntry, build_card, build_notice_card, entry_id_for
 from .gmail_client import RequestEmail, reply_recipients, reply_subject
 from .metrics import CreditMetrics
-from .template import billing_hold_value, unbilled_value
+from .template import billing_hold_value, missing_ci_value, missing_rc_value, unbilled_value
 
 log = logging.getLogger(__name__)
 
@@ -46,8 +46,8 @@ def build_entry(
         ["Customer", f"{metrics.customer_id} — {metrics.customer_name or req.customer_name}"],
         ["Requester", req.requester_email or "(unknown)"],
         ["Unbilled Load Balance", unbilled_value(metrics)],
-        ["Loads Missing Rate Confirmations", str(metrics.missing_rate_confirmation_count)],
-        ["Loads Missing Carrier Invoices", str(metrics.missing_carrier_invoice_count)],
+        ["Loads Missing Rate Confirmations", missing_rc_value(metrics)],
+        ["Loads Missing Carrier Invoices", missing_ci_value(metrics)],
         ["Loads on Billing Hold", billing_hold_value(metrics)],
     ]
     message_id = req.rfc_message_id or req.message_id
