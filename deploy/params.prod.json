@@ -8,7 +8,7 @@
     "Reviewers = JSON list of addresses allowed to click Approve / Move / Reject.",
     "ScheduleEnabled = false deploys the worker without the 5-minute trigger; invoke once by hand, then set true."
   ],
-  "Reviewers": "[\"hrushikesh.attarde@circledelivers.com\", \"jay.price@circledelivers.com\", \"toddj@circledelivers.com\"]",
+  "Reviewers": "[\"hrushikesh.attarde@circledelivers.com\", \"abigail.barnes@circledelivers.com\", \"brandi.hodge@circledelivers.com\", \"brandon.lanquist@circledelivers.com\", \"jamie.kinzenbaw@circledelivers.com\", \"jay.price@circledelivers.com\", \"jennifer.lewis@circledelivers.com\", \"jennifer.stetler@circledelivers.com\", \"kasey.dunderman@circledelivers.com\", \"toddj@circledelivers.com\"]",
   "ChatAudience": "980891554925",
   "Timezone": "America/New_York",
   "TransportProBaseUrl": "https://cli.transportpro.net/publicapi/v1",
