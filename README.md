@@ -85,8 +85,10 @@ Transport Pro and emails it (from `GMAIL_USER`) to `PITT_REPORT_TO`
 | Carrier Invoice | those loads with no *Carrier Invoice* file attached; adds the carrier as "Driver" |
 | Billing Holds | those loads with `status.billingLock` (Billing Hold enabled) |
 
-Same columns, widths and formats as the original; rows sorted by Bill To, then
-Delivery Date. **Days** is `=TODAY()-<Delivery Date>` (it keeps counting when the
+Same columns, widths and formats as the original. Every tab is sorted like the
+team's manual Sheets sort: **Bill To** A to Z, then **Days** Z to A (oldest
+delivery first), then **Terminal** A to Z, then **Order Taker** A to Z; text
+ignores case and blanks go last, as in Sheets. **Days** is `=TODAY()-<Delivery Date>` (it keeps counting when the
 file is opened later) with the original color scale: green at 30, yellow at 60,
 red at 90 days. The email body summarises each tab (loads, total, oldest pickup,
 aging buckets).

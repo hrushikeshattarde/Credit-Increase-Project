@@ -10,8 +10,9 @@ PODs: 296, 305, 309, 319, 327 as of 2026-11):
   Billing Holds    those loads on Billing Hold (status.billingLock)
 
 These are the same four searches the credit-increase reply uses (metrics.py), run
-per terminal instead of per customer. Each tab is sorted by Bill To, then Delivery
-Date. "Days" is =TODAY()-<Delivery Date>, so it keeps counting when the file is
+per terminal instead of per customer. Each tab is sorted by Bill To (A to Z), then
+Days (Z to A, oldest delivery first), then Terminal (A to Z), then Order Taker
+(A to Z). "Days" is =TODAY()-<Delivery Date>, so it keeps counting when the file is
 opened later, with the original's green / yellow / red color scale at 30 / 60 / 90.
 
 Resumable: Transport Pro serves the per-load lookups (attached files, dispatches)
@@ -171,8 +172,33 @@ class PittReport:
         return sorted(self.terminals.values(), key=lambda c: (len(c), c))
 
 
+def _text_key(value: str) -> tuple:
+    """A to Z the way Google Sheets sorts text: case-insensitive, blanks last."""
+    value = (value or "").strip()
+    return (value == "", value.lower())
+
+
+def _terminal_key(code: str) -> tuple:
+    """Terminal codes are numbers in the sheet, so 282 < 296 < 1001; blanks last."""
+    code = (code or "").strip()
+    return (code == "", int(code) if code.isdigit() else 0, code)
+
+
 def _sort_key(l: ReportLoad):
-    return (l.bill_to.lower(), l.delivery_date or date.max, l.load_id)
+    """Every tab's row order, as the team sorts the sheet by hand:
+    Bill To A to Z, then Days Z to A, then Terminal A to Z, then Order Taker A to Z.
+
+    Days = TODAY() - Delivery Date, so "Days Z to A" is the oldest delivery first
+    (it stays correct on any day the file is opened). Loads without a delivery
+    date have a blank Days and go last, as Sheets puts blanks last. The load id
+    is a final tie-break so the order is the same on every run."""
+    return (
+        _text_key(l.bill_to),
+        l.delivery_date is None, l.delivery_date or date.max,
+        _terminal_key(l.terminal_code),
+        _text_key(l.order_taker),
+        l.load_id,
+    )
 
 
 # ---------------------------------------------------------------- collecting

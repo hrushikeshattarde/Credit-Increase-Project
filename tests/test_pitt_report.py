@@ -143,6 +143,33 @@ def test_tabs_columns_and_order():
         assert [wb["Billing Holds"].cell(r, 1).value for r in (2, 3)] == [4, 1]
 
 
+def test_sort_bill_to_then_days_desc_then_terminal_then_order_taker():
+    def l(lid, bill_to, delivery, terminal, taker):
+        return pr.ReportLoad(
+            load_id=lid, bill_to=bill_to, terminal_code=terminal, order_taker=taker,
+            pickup_date=delivery, delivery_date=delivery, freight=1.0, fuel=0.0, accessorial=0.0,
+            billing_lock=False,
+        )
+
+    sep1, sep9 = date(2026, 9, 1), date(2026, 9, 9)
+    loads = [
+        l(10, "niagara bottling, LLC", sep1, "305", "Luis Contreras"),
+        l(11, "Niagara Bottling, LLC", sep9, "282", "Brian Thalman"),
+        l(12, "Niagara Bottling, LLC", sep1, "282", "cory OMalley"),
+        l(13, "Niagara Bottling, LLC", sep1, "282", "Brian Thalman"),
+        l(14, "Niagara Bottling, LLC", sep1, "282", ""),
+        l(15, "Niagara Bottling, LLC", None, "282", "Brian Thalman"),
+        l(16, "Niagara Bottling, LLC", sep1, "1001", "Alanis Penalba"),
+        l(17, "LMT Mercer Group, Inc.", sep9, "309", "Cody Steigerwald"),
+    ]
+    report = pr.PittReport(as_of=AS_OF, terminals={}, loads=loads, warnings=[])
+    order = [x.load_id for x in report.tab("Unbilled")]
+    # LMT before Niagara (case-insensitive); within Niagara the most Days (Sept 1)
+    # first; among Sept 1 terminal 282 < 305 < 1001, and within 282 the order takers
+    # A to Z with the blank one last; Sept 9 next; no delivery date (blank Days) last.
+    assert order == [17, 13, 12, 14, 10, 16, 11, 15]
+
+
 def test_email_summary():
     text, html = pr.email_bodies(_report())
     assert "terminals 282, 296" in text
