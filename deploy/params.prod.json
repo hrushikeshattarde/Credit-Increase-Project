@@ -6,7 +6,8 @@
     "ChatAudience = the Google Cloud project NUMBER of the credit bot's Chat app;",
     "blank makes the callback reject every click (fail closed).",
     "Reviewers = JSON list of addresses allowed to click Approve / Move / Reject.",
-    "ScheduleEnabled = false deploys the worker without the 5-minute trigger; invoke once by hand, then set true."
+    "ScheduleEnabled = false deploys the worker without the 5-minute trigger; invoke once by hand, then set true.",
+    "PittReportEnabled = true turns on the monthly PITT workbook email (1st of the month, 8:00 Eastern) to PittReportTo."
   ],
   "Reviewers": "[\"hrushikesh.attarde@circledelivers.com\", \"abigail.barnes@circledelivers.com\", \"brandi.hodge@circledelivers.com\", \"brandon.lanquist@circledelivers.com\", \"jamie.kinzenbaw@circledelivers.com\", \"jay.price@circledelivers.com\", \"jennifer.lewis@circledelivers.com\", \"jennifer.stetler@circledelivers.com\", \"kasey.dunderman@circledelivers.com\", \"toddj@circledelivers.com\"]",
   "ChatAudience": "980891554925",
@@ -17,5 +18,7 @@
   "FormSender": "formresponse@circledelivers.com",
   "ChatSpace": "spaces/AAQALodz658",
   "EmailLookbackDays": 14,
-  "ScheduleEnabled": "true"
+  "ScheduleEnabled": "true",
+  "PittReportEnabled": "true",
+  "PittReportTo": "jay.price@circledelivers.com"
 }

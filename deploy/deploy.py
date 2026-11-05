@@ -28,6 +28,8 @@ PACKAGE_DEPS = [
     "google-api-python-client>=2.100",
     "requests>=2.31",
     "python-dotenv>=1.0",
+    "openpyxl>=3.1",  # monthly PITT workbook (credit_bot/pitt_report.py)
+    "tzdata",  # zoneinfo fallback if the runtime image has no time zone database
 ]
 
 

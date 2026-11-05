@@ -38,6 +38,9 @@ class TransportProClient:
             {"User-Agent": "circle-credit-increase-bot/1.0", "Accept": "application/json"}
         )
         self._lock = threading.Lock()
+        # Seconds slept before retry n (times n) after an HTTP 5xx. The PITT report
+        # lowers it: its per-load 500s are transient and come back in ~2 s anyway.
+        self.server_error_backoff = 2.0
         self._access_token: str | None = None
         self._refresh_token: str | None = None
         self._expires_at: float = 0.0
@@ -123,7 +126,7 @@ class TransportProClient:
                 continue
             if resp.status_code >= 500:
                 last_error = f"HTTP {resp.status_code}"
-                time.sleep(2 * (attempt + 1))
+                time.sleep(self.server_error_backoff * (attempt + 1))
                 continue
             if not resp.ok:
                 raise TransportProError(
@@ -165,26 +168,32 @@ class TransportProClient:
 
     def search_loads(
         self,
-        customer_id: int,
+        customer_id: int | None,
         lookback_days: int,
         load_status: str | None = None,
         billing_status: str | None = None,
         has_billing_lock: bool | None = None,
         future_days: int = 60,
+        terminal_id: int | None = None,
     ) -> list[dict]:
-        """All loads for a customer matching the status filters over the lookback.
+        """All loads for a customer (or a terminal) matching the status filters over the lookback.
 
         Windows are keyed on pickup date. future_days extends the newest window
         past today so loads with a future pickup date are not skipped.
         has_billing_lock=True keeps only loads on Billing Hold (the web
         screen's "Hold Enabled"; API parameter hasBillingLock).
+        terminal_id matches the load's assigned terminal exactly: child
+        terminals (PODs) are not included and need their own search.
         """
+        if customer_id is None and terminal_id is None:
+            raise ValueError("search_loads needs a customer_id or a terminal_id")
         seen: dict[int, dict] = {}
         end = date.today() + timedelta(days=future_days)
         for start, stop in self.windows(lookback_days + future_days, end=end):
             for load in self.get_pages(
                 "/load/search",
                 customerId=customer_id,
+                terminalId=terminal_id,
                 loadStatus=load_status,
                 billingStatus=billing_status,
                 hasBillingLock="true" if has_billing_lock else None,
@@ -196,6 +205,17 @@ class TransportProClient:
 
     def load(self, load_id: int) -> dict:
         return self.get(f"/load/{load_id}")
+
+    # ------------------------------------------------- terminals / users / dispatch
+    def terminals(self) -> list[dict]:
+        """Every terminal (id, terminalCode, title, parentTerminalId, ...)."""
+        return list(self.get_pages("/terminal/search"))
+
+    def user(self, user_id: int) -> dict:
+        return self.get(f"/user/{user_id}")
+
+    def dispatches_for_load(self, load_id: int) -> list[dict]:
+        return list(self.get_pages("/dispatch/search", loadId=load_id))
 
     def missing_documents(self, workers: int = 8) -> dict[int, list[str]]:
         """Map of load id -> missing document names, across the whole tenant.

@@ -69,8 +69,32 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: Run the worker every 5 minutes. Deploy with false, invoke once by hand, then flip to true.
 
+  # ---- monthly PITT delivered-unbilled workbook (credit_bot/pitt_report.py) ----
+  PittReportEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Email the PITT workbook on PittReportSchedule (the rule is created disabled when false).
+  PittReportSchedule:
+    Type: String
+    Default: "cron(0/10 12-15 1 * ? *)"
+    Description: >
+      EventBridge schedule in UTC. Default: every 10 minutes from 12:00 to 15:50 UTC on
+      the 1st of every month. The worker skips runs before 8:00 local time (TZ), so the
+      report starts at 8:00 Eastern in winter and summer alike; each run resumes the
+      checkpoint until one completes and sends, the rest are no-ops.
+  PittReportTo:
+    Type: String
+    Default: jay.price@circledelivers.com
+    Description: Comma-separated recipients of the monthly PITT workbook (sent from GmailUser).
+  PittReportCc:
+    Type: String
+    Default: ""
+    Description: Comma-separated Cc of the monthly PITT workbook.
+
 Conditions:
   ScheduleOn: !Equals [!Ref ScheduleEnabled, "true"]
+  PittReportOn: !Equals [!Ref PittReportEnabled, "true"]
 
 Resources:
   # ---- state: approvals/{pending,claims,results}/<entry>.json --------------
@@ -222,6 +246,9 @@ Resources:
                   - !Sub "${StateBucket.Arn}/approvals/*"
                   - !Sub "${StateBucket.Arn}/state/*"
               - Effect: Allow
+                Action: s3:DeleteObject  # PITT report: release a send claim after a failed send
+                Resource: !Sub "${StateBucket.Arn}/state/pitt_report_claim_*"
+              - Effect: Allow
                 Action: s3:ListBucket
                 Resource: !GetAtt StateBucket.Arn
                 Condition:
@@ -264,6 +291,8 @@ Resources:
           APPROVALS_BUCKET: !Ref StateBucket
           APPROVAL_EXPIRY_DAYS: !Ref ApprovalExpiryDays
           APPROVE_ENABLED: !Ref ApproveEnabled
+          PITT_REPORT_TO: !Ref PittReportTo
+          PITT_REPORT_CC: !Ref PittReportCc
 
   WorkerSchedule:
     Type: AWS::Events::Rule
@@ -282,6 +311,26 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt WorkerSchedule.Arn
+
+  PittReportRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "creditbot-pitt-report-${StackEnv}-monthly"
+      Description: Builds the PITT delivered-unbilled workbook and emails it (worker task pitt_report).
+      ScheduleExpression: !Ref PittReportSchedule
+      State: !If [PittReportOn, ENABLED, DISABLED]
+      Targets:
+        - Id: pitt-report
+          Arn: !GetAtt WorkerFunction.Arn
+          Input: '{"task": "pitt_report", "scheduled": true}'
+
+  PittReportPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WorkerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt PittReportRule.Arn
 
 Outputs:
   CallbackUrl:

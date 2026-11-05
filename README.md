@@ -70,6 +70,60 @@ Validated against the web screen for customers 10343 (5), 5245 (0) and
 "Unanswered Operations Requests" comes from the Operations Request Sheet (not
 Transport Pro) and is rendered as `0`.
 
+## Monthly PITT workbook
+
+`credit_bot/pitt_report.py` rebuilds the hand-made "PITT September.xlsx" from
+Transport Pro and emails it (from `GMAIL_USER`) to `PITT_REPORT_TO`
+(jay.price@circledelivers.com). It covers the Pittsburgh Office terminal
+(id 1126, code 282) and every child terminal, found at run time (the PITT PODs
+296, 305, 309, 319, 327 as of 2026-11).
+
+| Tab | Loads |
+|---|---|
+| Unbilled | Dispatch status *Delivered* + Billing status *Billing Open* on those terminals |
+| Rate Cons | those loads with no *Rate Confirmation* file attached |
+| Carrier Invoice | those loads with no *Carrier Invoice* file attached; adds the carrier as "Driver" |
+| Billing Holds | those loads with `status.billingLock` (Billing Hold enabled) |
+
+Same columns, widths and formats as the original; rows sorted by Bill To, then
+Delivery Date. **Days** is `=TODAY()-<Delivery Date>` (it keeps counting when the
+file is opened later) with the original color scale: green at 30, yellow at 60,
+red at 90 days. The email body summarises each tab (loads, total, oldest pickup,
+aging buckets).
+
+    python pitt_report.py                       # build "out/PITT <Month> <Year>.xlsx" only
+    python pitt_report.py --send --to me@...    # test send to yourself (not recorded)
+    python pitt_report.py --send                # send to PITT_REPORT_TO, once per month
+    python pitt_report.py --send --force        # send again this month
+    python pitt_report.py --fresh               # ignore today's checkpoint, pull everything again
+
+**It takes ~13 minutes.** Transport Pro serves the per-load lookups (attached files
+for ~1,000 loads, dispatches for the ~750 missing a carrier invoice) at only ~2.5
+per second whatever the concurrency, and answers HTTP 500 when pushed (measured
+2026-11-05: 8 parallel workers failed 5% outright). So the run uses 2 workers with
+quick retries and checkpoints after every 25 loads (`pitt_report_progress.json`);
+a run that is stopped resumes where it left off, and later runs on the same day
+reuse the finished data, so a test send and the real send carry the same figures.
+
+State documents (the `state/` folder locally, `state/` in the bucket for the Lambda):
+`pitt_report_progress.json` (checkpoint, with a 2-minute lease so two runs never
+work at once), `pitt_report_claim_<YYYY-MM>.json` (created atomically right before
+sending; released if the send fails) and `pitt_report_sent_<YYYY-MM>.json` (the
+month's send). Together they make every month mail at most once.
+
+In AWS the worker Lambda runs it on the EventBridge rule
+`creditbot-pitt-report-prod-monthly`: every 10 minutes from 12:00 to 15:50 UTC on
+the 1st of the month (`PittReportSchedule`), event `{"task": "pitt_report",
+"scheduled": true}`. Scheduled runs before 8:00 local time (the function's TZ,
+America/New_York) do nothing, so the report starts at 8:00 Eastern in winter and
+summer alike. Each run works until ~90 s before its 10-minute timeout and the next
+one resumes; the one that completes sends, and the rest find the sent record and
+stop. Stack parameters: `PittReportEnabled`, `PittReportSchedule`, `PittReportTo`,
+`PittReportCc`. By hand (`dry_run` builds without sending; `force` resends;
+`fresh` drops the checkpoint; `to` makes it a test send):
+
+    aws lambda invoke --function-name creditbot-worker-prod --cli-binary-format raw-in-base64-out --payload '{"task": "pitt_report", "dry_run": true}' out.json
+
 ## Approval cards in Google Chat (optional)
 
 With `APPROVAL_MODE=chat` each reply is posted as a card in the *Credit Increase

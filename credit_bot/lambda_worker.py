@@ -58,6 +58,47 @@ def _prepare_environment() -> None:
     _READY = True
 
 
+def _pitt_report(settings, tpro, gmail, event: dict, context) -> dict:
+    """Monthly PITT workbook (rule creditbot-pitt-report-<env>-monthly).
+
+    The rule fires every 10 minutes on send day; each invocation works until ~90 s
+    before its timeout, checkpointing to state/pitt_report_progress.json, and the
+    one that completes the report sends it. Later invocations find
+    state/pitt_report_sent_<YYYY-MM>.json and stop at once. The rule's hours are in
+    UTC and cover both EST and EDT, so scheduled invocations before
+    PITT_REPORT_NOT_BEFORE_HOUR local time (TZ, default 8) do nothing.
+    """
+    import time
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from credit_bot.pitt_report import run as run_pitt_report
+    from credit_bot.state import S3Docs
+
+    tz_name = os.environ.get("TZ", "").lstrip(":")
+    local_now = datetime.now(ZoneInfo(tz_name if "/" in tz_name else "America/New_York"))
+    not_before = int(os.environ.get("PITT_REPORT_NOT_BEFORE_HOUR") or 8)
+    if event.get("scheduled") and local_now.hour < not_before:
+        return {"ok": True, "task": "pitt_report", "status": f"before {not_before}:00 local time"}
+    remaining = context.get_remaining_time_in_millis() / 1000 if context else 600
+    to = event.get("to")
+    result = run_pitt_report(
+        settings,
+        tpro,
+        Path(os.environ.get("OUT_DIR") or "/tmp/out"),
+        S3Docs(os.environ["CREDIT_STATE_BUCKET"]),
+        gmail=gmail,
+        send=not bool(event.get("dry_run")),
+        to=[to] if isinstance(to, str) else to,
+        force=bool(event.get("force")),
+        fresh=bool(event.get("fresh")),
+        as_of=local_now.date(),
+        deadline=time.monotonic() + max(remaining - 90, 30),
+    )
+    log.info("PITT report: %s", result)
+    return {"ok": True, "task": "pitt_report", **{k: v for k, v in result.items() if k != "file"}}
+
+
 def handler(event: dict | None = None, context=None) -> dict:
     _prepare_environment()
 
@@ -81,6 +122,10 @@ def handler(event: dict | None = None, context=None) -> dict:
     event = event or {}
     tpro = bot.make_tpro(settings)
     gmail = GmailClient(settings.service_account_file, settings.gmail_user)
+
+    if event.get("task") == "pitt_report":
+        return _pitt_report(settings, tpro, gmail, event, context)
+
     store = S3ProcessedStore(os.environ["CREDIT_STATE_BUCKET"])
     rc = bot.run_once(
         settings,

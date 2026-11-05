@@ -80,6 +80,17 @@ class Settings:
     # Drafts and a manual send (the callback refuses approve clicks on old cards too).
     approve_enabled: bool = False
 
+    # --- Monthly PITT unbilled-loads workbook (credit_bot/pitt_report.py) ----
+    # Recipients of the monthly email; it is sent from GMAIL_USER.
+    pitt_report_to: list[str] = field(default_factory=lambda: ["jay.price@circledelivers.com"])
+    pitt_report_cc: list[str] = field(default_factory=list)
+    # Transport Pro id of "Pittsburgh Office" (terminal code 282). Its child
+    # terminals (the PITT PODs) are found at run time and included.
+    pitt_parent_terminal_id: int = 1126
+    # Pickup-date lookback for the report (the September 2026 workbook went
+    # back to November 2024, so the default is three years).
+    pitt_lookback_days: int = 1095
+
     # --- Runtime ------------------------------------------------------------
     state_file: Path = PROJECT_ROOT / "state" / "processed.json"
     log_dir: Path = PROJECT_ROOT / "logs"
@@ -112,6 +123,10 @@ def load_settings() -> Settings:
         approvals_bucket=_env("APPROVALS_BUCKET", "") or "",
         approval_expiry_days=_env_int("APPROVAL_EXPIRY_DAYS", 3),
         approve_enabled=(_env("APPROVE_ENABLED", "false") or "false").lower() in ("1", "true", "yes"),
+        pitt_report_to=_env_list("PITT_REPORT_TO", ["jay.price@circledelivers.com"]),
+        pitt_report_cc=_env_list("PITT_REPORT_CC", []),
+        pitt_parent_terminal_id=_env_int("PITT_PARENT_TERMINAL_ID", 1126),
+        pitt_lookback_days=_env_int("PITT_LOOKBACK_DAYS", 1095),
         state_file=Path(_env("STATE_FILE", str(PROJECT_ROOT / "state" / "processed.json"))),
         log_dir=Path(_env("LOG_DIR", str(PROJECT_ROOT / "logs"))),
         poll_seconds=_env_int("POLL_SECONDS", 300),

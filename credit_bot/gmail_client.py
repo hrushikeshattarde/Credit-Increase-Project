@@ -305,3 +305,34 @@ class GmailClient:
             return self.create_reply_draft(req, html_body, text_body, teamcredit, form_sender, extra_cc)
         log.info("Draft %s updated on thread %s (to=%s cc=%s)", draft["id"], req.thread_id, to, cc)
         return draft["id"]
+
+    # ------------------------------------------------------------- sending
+    def send_email(
+        self,
+        to: list[str],
+        subject: str,
+        text_body: str,
+        html_body: str,
+        attachments: list[Path] | None = None,
+        cc: list[str] | None = None,
+    ) -> str:
+        """Send a new message (not a reply) from the impersonated mailbox.
+        gmail.compose covers users.messages.send. Returns the Gmail message id."""
+        msg = EmailMessage()
+        msg["From"] = self.user
+        msg["To"] = ", ".join(to)
+        if cc:
+            msg["Cc"] = ", ".join(cc)
+        msg["Subject"] = subject
+        msg.set_content(text_body)
+        msg.add_alternative(html_body, subtype="html")
+        for path in attachments or []:
+            if path.suffix.lower() == ".xlsx":
+                maintype, subtype = "application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                msg.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
+            else:
+                attach_files(msg, [path])
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+        sent = self.svc.users().messages().send(userId="me", body={"raw": raw}).execute()
+        log.info("Sent message %s from %s (to=%s cc=%s): %s", sent.get("id"), self.user, to, cc or [], subject)
+        return str(sent.get("id") or "")
